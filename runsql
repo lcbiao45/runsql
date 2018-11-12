@@ -26,7 +26,7 @@
 	#默认文件分隔符
 	ifs=","
 	#数据库配置文件地址
-	databaseConfigPath="/home/work/leichengbiao/utils/runsql_config"
+	databaseConfigPath="./runsql_config"
 	#加载数据库配置
 	loadDBConfig(){
 	   hostAdress=`sed '/^'$hostAlias'_hostAdress=/!d;s/.*=//' $databaseConfigPath`
