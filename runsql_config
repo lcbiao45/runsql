@@ -1,0 +1,16 @@
+#runsql数据库配置
+conf1_hostAdress=11.231.434.11
+conf1_hostPort=3006
+conf1_hostUser=root
+conf1_hostPassword=123
+conf1_hostDatabase=test
+conf1_tableStart=0
+conf1_tableEnd=15
+
+conf2_hostAdress=11.231.434.11
+conf2_hostPort=3006
+conf2_hostUser=root
+conf2_hostPassword=123
+conf2_hostDatabase=test2
+conf2_tableStart=0
+conf2_tableEnd=15
