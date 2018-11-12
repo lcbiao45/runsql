@@ -1,0 +1,184 @@
+#!/bin/sh
+	today=""
+	yesterday=""
+	nowTime=""
+	#默认分表
+	tableStart=0
+	#默认分表
+	tableEnd=15
+  #是否显示字段名
+  NN=""
+  #是否查询16张表
+  isAll="false"
+	#文件地址
+	filepath=""
+	#数据库主机地址
+	hostAdress=""
+	#数据库主机端口
+	hostPort=""
+	#数据库主机用户名
+	hostUser=""
+	#数据库密码
+	hostPassword=""
+	#数据库
+	#数据库别名默认trans
+	hostAlias="trans"
+	#默认文件分隔符
+	ifs=","
+	#数据库配置文件地址
+	databaseConfigPath="/home/work/leichengbiao/utils/runsql_config"
+	#加载数据库配置
+	loadDBConfig(){
+	   hostAdress=`sed '/^'$hostAlias'_hostAdress=/!d;s/.*=//' $databaseConfigPath`
+	   hostPort=`sed '/^'$hostAlias'_hostPort=/!d;s/.*=//' $databaseConfigPath`
+	   hostUser=`sed '/^'$hostAlias'_hostUser=/!d;s/.*=//' $databaseConfigPath`
+	   hostPassword=`sed '/^'$hostAlias'_hostPassword=/!d;s/.*=//' $databaseConfigPath`
+	   hostDatabase=`sed '/^'$hostAlias'_hostDatabase=/!d;s/.*=//' $databaseConfigPath`
+	   tableStart=`sed '/^'$hostAlias'_tableStart=/!d;s/.*=//' $databaseConfigPath`
+	   tableEnd=`sed '/^'$hostAlias'_tableEnd=/!d;s/.*=//' $databaseConfigPath`
+        }
+
+	execSql(){
+	     func_sql="$1"
+             if [  "$isAll" == "true" ]
+             then
+             for loop in $(seq $tableStart 1 $tableEnd);
+		  do
+                     realSql=${func_sql//IX/$loop}
+	             mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword $NN -e "use $hostDatabase;
+                     $realSql
+                      ;"
+                  done
+             else
+                     realSql=${func_sql//IX/$loop}
+                     mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword $NN -e "use $hostDatabase;
+                     $realSql
+                     ;"
+             fi
+        }
+
+	keyReplace() {
+		getTodayDate
+		getYesterday
+		getNowTime
+		sql=${sql//TODAY/$today}
+		sql=${sql//YESTERDAY/$yesterday}
+		sql=${sql//NOW/$nowTime}
+	}
+
+	getTodayDate() {
+		today=`date '+%Y-%m-%d'`
+	}
+
+	 getYesterday() {
+		yesterday=`date '+%Y-%m-%d' -d '-1days'`
+	}
+
+	getNowTime(){
+	   nowTime=`date '+%Y-%m-%d %H:%m:%S'`
+	}
+
+	show_keys(){
+		getTodayDate
+		getYesterday
+		getNowTime
+		echo IX 代表分表索引 脚本默认遍历16张表查询
+		echo NOW 代表 当天时间 例 $nowTime
+		echo TODAY 代表 今天 例 $today
+		echo YESTERDAY 代表 昨天 例 $yesterday
+		echo FDATA 代表从文件获取的数据
+	}
+
+        show_help(){
+	loadDBConfig
+        echo 使用方式 runsql -:d:fNahkct  '"'sql'"'
+        echo -d database 传入数据库名 默认为 $hostDatabase
+	echo ""
+	echo -f file 代表从文件读取数据 必须配合关键字 FDATA使用 示例 runsql -f ~/leichengbiao/filedata '"'select STATUS from LOAN_ORDER_IX where LOAN_ORDER_ID = "'"FDATA0"'" '"'
+	echo 其中FDATA0代表第一列 FDATA1代表第二列 一次类推
+        echo ""
+	echo -a all 是否遍历所有子表 不传代表否
+        echo ""
+	echo -N name 是否显示字段名 不传代表是
+        echo ""
+	echo -h help 显示帮助
+	echo ""
+	echo -k key 显示所有关键字
+        echo ""
+	echo -c config 显示配置文件详情
+	echo ""
+	echo -t 指定分隔符 从文件批量获取数据时使用的分隔符 默认为 ,
+        echo ""
+	echo 表索引使用 IX 代替
+        echo 使用示例：runsql  '"'select F.STATUS from LOAN_ORDER_IX L inner join FUND_ORDER_IX F on L.LOAN_ORDER_ID = F.BIZ_ORDER_ID where L.BID =12\\G'"'
+	echo by leichengbiao
+        }
+        #参数右移位数
+        args=$#
+        lastargs=${!args}
+        while getopts ":d:f:Nahkct:" opt; do
+        case $opt in
+        d)
+            hostAlias=$OPTARG
+            ;;
+	      f)
+	          filepath=$OPTARG
+	          ;;
+        N)
+            NN="-N"
+            ;;
+        a)
+            isAll="true"
+            ;;
+        h)
+            show_help
+            exit 0
+            ;;
+        k)
+            show_keys
+            exit 0
+            ;;
+        c)
+            cat $databaseConfigPath
+                  exit 0
+            ;;
+        t)
+           ifs=$OPTARG
+            ;;
+        :)
+            echo "参数必传option -$OPTARG"
+            exit 1
+            ;;
+        ?)
+            echo "无效的option -$OPTARG"
+            exit 1
+            ;;
+        esac
+        done
+
+	if [[ $# -eq 0 ]]
+         then
+         echo -e "\033[31m 致命错误---必须传入以\" \"包围的sql语句 当前传入sql为空 \033[0m"
+         exit 1
+         fi
+
+	sql=$lastargs
+	keyReplace
+	loadDBConfig
+	# 如果从文件获取数据源,需要按行执行sql
+	if [ -n "$filepath" ]
+	then
+	while read line
+		do
+		fdataArray=(${line//$ifs/ })
+		fdataNum=0
+		for var in ${fdataArray[@]}
+		do
+      		     	tmp_sql=${sql//FDATA$fdataNum/$line}
+			: $(( fdataNum++ ))
+		done
+		execSql "$tmp_sql"
+		done < $filepath
+	else
+		execSql "$sql"
+	fi
