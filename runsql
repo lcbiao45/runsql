@@ -1,15 +1,25 @@
 #!/bin/sh
+	tmpFile="./tmp_runsql_$$"
+	script_abs=$(readlink -f "$0")
+	script_dir=$(dirname $script_abs)
+	log_path=$(dirname $script_abs)/runsql.log
+	DB="mysql"
+	output="/dev/null"
+	is_show_cost_time="no"
+	high_perf_mode="false"
 	today=""
 	yesterday=""
 	nowTime=""
+	cost_time="-1"
+	timeStamp=""
 	#默认分表
 	tableStart=0
 	#默认分表
 	tableEnd=15
-  #是否显示字段名
-  NN=""
-  #是否查询16张表
-  isAll="false"
+        #是否显示字段名
+        NN=""
+        #是否查询所有分表
+        isRange="false"
 	#文件地址
 	filepath=""
 	#数据库主机地址
@@ -21,12 +31,13 @@
 	#数据库密码
 	hostPassword=""
 	#数据库
-	#数据库别名默认trans
-	hostAlias="trans"
+	#数据库别名默认default
+	hostAlias="default"
 	#默认文件分隔符
 	ifs=","
+	justshowsql=""
 	#数据库配置文件地址
-	databaseConfigPath="./runsql_config"
+	databaseConfigPath=${script_dir}/runsql_config
 	#加载数据库配置
 	loadDBConfig(){
 	   hostAdress=`sed '/^'$hostAlias'_hostAdress=/!d;s/.*=//' $databaseConfigPath`
@@ -40,27 +51,38 @@
 
 	execSql(){
 	     func_sql="$1"
-             if [  "$isAll" == "true" ]
-             then
+             if [  "$isRange" == "true" ];then
              for loop in $(seq $tableStart 1 $tableEnd);
 		  do
-                     realSql=${func_sql//IX/$loop}
-	             mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword $NN -e "use $hostDatabase;
-                     $realSql
-                      ;"
-                  done
+                   realSql=${func_sql//IX/$loop}
+		if [ "$justshowsql" == "true" ];then
+	         echo "mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword --default-character-set=utf8 $NN -e \"use $hostDatabase; $realSql ;\""
+		else
+	       result=`mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword --default-character-set=utf8 $NN -e "use $hostDatabase; $realSql ;"`
+			if [ -n "$result" ];then
+                        	  echo "$result"
+				 if [ "$high_perf_mode" == "true" ];then
+					break;
+				fi
+                        fi
+	         fi
+                done
              else
-                     realSql=${func_sql//IX/$loop}
-                     mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword $NN -e "use $hostDatabase;
-                     $realSql
-                     ;"
-             fi
+		if [ "$justshowsql" == "true" ];then
+                    echo "mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword --default-character-set=utf8 $NN -e \"use $hostDatabase; $func_sql ;\""
+		else
+		    mysql -h$hostAdress -P$hostPort -u$hostUser -p$hostPassword --default-character-set=utf8 $NN -e "use $hostDatabase; $func_sql ; "
+		 fi
+            fi
         }
+
+
+
 
 	keyReplace() {
 		getTodayDate
 		getYesterday
-		getNowTime
+		setNowTime
 		sql=${sql//TODAY/$today}
 		sql=${sql//YESTERDAY/$yesterday}
 		sql=${sql//NOW/$nowTime}
@@ -74,111 +96,199 @@
 		yesterday=`date '+%Y-%m-%d' -d '-1days'`
 	}
 
-	getNowTime(){
-	   nowTime=`date '+%Y-%m-%d %H:%m:%S'`
+	setNowTime(){
+	   nowTime=`date '+%Y-%m-%d %H:%M:%S'`
+	}
+	setTimeStamp(){
+	   timeStamp=`date +%s%N`
+	   #timeStamp=`date -d "$1" +%s`
 	}
 
+	caculateTime(){
+		startTime=$(date --date="$anchorTime" +%s);
+	  	thisTime=`date '+%Y-%m-%d %H:%M:%S'`
+	  	endTime=$(date --date="$thisTime" +%s);
+		cost_time=$((endTime-startTime))
+           if [ "$is_show_cost_time" == "true" ];then
+	  	echo "本次运行时间： "$cost_time"s"
+	   fi
+	}
 	show_keys(){
 		getTodayDate
 		getYesterday
-		getNowTime
-		echo IX 代表分表索引 脚本默认遍历16张表查询
-		echo NOW 代表 当天时间 例 $nowTime
-		echo TODAY 代表 今天 例 $today
-		echo YESTERDAY 代表 昨天 例 $yesterday
-		echo FDATA 代表从文件获取的数据
+		setNowTime
+		echo -e "\033[32m IX \033[0m" 代表分表索引
+		echo -e "\033[32m NOW \033[0m"  代表 当天时间 例 $nowTime
+		echo -e "\033[32m TODAY \033[0m"  TODAY 代表 今天 例 $today
+		echo -e "\033[32m YESTERDAY \033[0m"  代表 昨天 例 $yesterday
+		echo -e "\033[32m FDATA \033[0m"  代表从文件获取的数据 FDATA0代表第一列 FDATA1代表第二列以此类推 其中列的分隔符默认为逗号, 可以通过-t选项来自定义分隔符
 	}
 
+	show_log(){
+	   cat	$log_path
+	}
+
+	log_to_tail(){
+		uuid="$1"
+		message="$2"
+		sed -i "s/${uuid}.*$/& ${message}/" $log_path
+	}
+	log_after_uuid(){
+		uuid="$1"
+                message="$2"
+		sed -i "s/${uuid}/& ${message}/" $log_path
+	}
         show_help(){
 	loadDBConfig
-        echo 使用方式 runsql -:d:fNahkct  '"'sql'"'
-        echo -d database 传入数据库名 默认为 $hostDatabase
-	echo ""
-	echo -f file 代表从文件读取数据 必须配合关键字 FDATA使用 示例 runsql -f ~/leichengbiao/filedata '"'select STATUS from LOAN_ORDER_IX where LOAN_ORDER_ID = "'"FDATA0"'" '"'
-	echo 其中FDATA0代表第一列 FDATA1代表第二列 一次类推
-        echo ""
-	echo -a all 是否遍历所有子表 不传代表否
-        echo ""
-	echo -N name 是否显示字段名 不传代表是
-        echo ""
-	echo -h help 显示帮助
-	echo ""
-	echo -k key 显示所有关键字
-        echo ""
-	echo -c config 显示配置文件详情
-	echo ""
-	echo -t 指定分隔符 从文件批量获取数据时使用的分隔符 默认为 ,
-        echo ""
-	echo 表索引使用 IX 代替
-        echo 使用示例：runsql  '"'select F.STATUS from LOAN_ORDER_IX L inner join FUND_ORDER_IX F on L.LOAN_ORDER_ID = F.BIZ_ORDER_ID where L.BID =12\\G'"'
-	echo by leichengbiao
+        echo -e "\033[32m  使用方式 runsql -:d:fNahkctsm  \"sql\" \033[0m"
+        echo -e "\033[32m -d database 传入数据库名 默认为 $hostDatabase \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -f file 代表从文件读取数据 必须配合关键字 FDATA使用 示例 runsql -rf ~/leichengbiao/filedata \"select * from teacher_IX where name = 'FDATA0' \" \033[0m"
+	echo -e "\033[32m 其中FDATA0代表第一列 FDATA1代表第二列 依次类推 \033[0m"
+        echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -r range 是否遍历所有分表 不传代表否 \033[0m"
+        echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -N name 是否显示字段名 不传代表是 \033[0m"
+        echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -h help 显示帮助 \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -k key 显示所有关键字 \033[0m"
+        echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -c config 显示配置文件详情 \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -w config 编辑config \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -t 指定分隔符 从文件批量获取数据时使用的分隔符 默认为 ,\033[0m"
+        echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -s debug 模式展示完整sql \033[0m"
+	echo -e "\033[32m -s 显示日志 \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -m 显示耗时 单位s \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m -p 查到结果立刻返回，如果需要提高查询速度[速度提升2倍以上]可以选择开启，如果需要查询所有分表中数据则请关闭 \033[0m"
+	echo -e "\033[32m "" \033[0m"
+	echo -e "\033[32m 表索引使用 IX 代替 \033[0m"
+        echo -e "\033[32m 使用示例：runsql  -r \"select T.name from teacher_IX T inner join course C on T.id = C.teacher_id where C.id =12\\G\" \033[0m"
+	echo -e "\033[32m log_path: $log_path  \033[0m"
+	echo -e "\033[32m by leichengbiao \033[0m"
         }
-        #参数右移位数
-        args=$#
-        lastargs=${!args}
-        while getopts ":d:f:Nahkct:" opt; do
+
+	args=$#
+        while getopts ":d:f:Nrhkwct:smpo:l" opt; do
         case $opt in
         d)
             hostAlias=$OPTARG
+
             ;;
-	      f)
-	          filepath=$OPTARG
-	          ;;
+	f)
+	    filepath=$OPTARG
+
+	    ;;
         N)
             NN="-N"
+
             ;;
-        a)
-            isAll="true"
+        r)
+            isRange="true"
+
             ;;
         h)
             show_help
+
             exit 0
             ;;
-        k)
-            show_keys
+	k)
+	    show_keys
+	    exit 0
+	    ;;
+        w)
+	    vim $databaseConfigPath
             exit 0
             ;;
-        c)
+	c)
+	    echo $databaseConfigPath
             cat $databaseConfigPath
-                  exit 0
-            ;;
-        t)
-           ifs=$OPTARG
-            ;;
+            echo $databaseConfigPath
+            exit 0
+	    ;;
+	t)
+	   ifs=$OPTARG
+
+	    ;;
+	s)
+	   justshowsql="true"
+
+	   ;;
+	m)
+	   is_show_cost_time="true"
+
+	   ;;
+	p)
+	   #如果需要展示所有查询结果，则需要关闭高性能模式
+	   high_perf_mode="true"
+
+	   ;;
+	o)
+	   #指定文件输出（文件可以是模板形式）
+           output=$OPTARG
+
+	   ;;
+	l)
+	   #show log
+	   show_log
+	   exit 0
+	   ;;
         :)
-            echo "参数必传option -$OPTARG"
+            echo "necessary option -$OPTARG"
             exit 1
             ;;
         ?)
-            echo "无效的option -$OPTARG"
+            echo "invalid option -$OPTARG"
             exit 1
             ;;
         esac
         done
+	if [ $# -eq 0 ];then
+                show_help
+                exit 0
+        fi
+	originParams="$@"
+	shift $(($OPTIND - 1))
+        sql=$1
 
-	if [[ $# -eq 0 ]]
-         then
-         echo -e "\033[31m 致命错误---必须传入以\" \"包围的sql语句 当前传入sql为空 \033[0m"
+	if [[ -z "$sql" ]]; then
+         echo -e "\033[31m 致命错误:必须传入以\" \"包围的sql语句 当前传入sql为空 \033[0m"
          exit 1
-         fi
+        fi
 
-	sql=$lastargs
+
+	setNowTime
+	setTimeStamp
+	exec_uuid=${timeStamp}_$$
+	echo  "$nowTime" "$exec_uuid" "runsql" "$originParams" >> $log_path
+
 	keyReplace
 	loadDBConfig
+	anchorTime=`date '+%Y-%m-%d %H:%M:%S'`
 	# 如果从文件获取数据源,需要按行执行sql
-	if [ -n "$filepath" ]
+	if [ -n "$filepath" ];
 	then
 	while read line
 		do
+		tmp_sql=$sql
 		fdataArray=(${line//$ifs/ })
 		fdataNum=0
 		for var in ${fdataArray[@]}
 		do
-      		     	tmp_sql=${sql//FDATA$fdataNum/$line}
+      		     	tmp_sql=${tmp_sql//FDATA$fdataNum/$var}
 			: $(( fdataNum++ ))
 		done
 		execSql "$tmp_sql"
-		done < $filepath
+	done < $filepath
 	else
 		execSql "$sql"
 	fi
+
+	caculateTime
+	setNowTime
+	log_after_uuid $exec_uuid "$nowTime ${cost_time}s"
